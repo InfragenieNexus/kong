@@ -35,6 +35,7 @@ local PING_WAIT = PING_INTERVAL * 1.5
 local _log_prefix = "[clustering] "
 local DECLARATIVE_EMPTY_CONFIG_HASH = constants.DECLARATIVE_EMPTY_CONFIG_HASH
 local prev_hash
+local cp_reachable = true
 
 local endswith = require("pl.stringx").endswith
 
@@ -74,6 +75,11 @@ function _M.new(clustering)
 end
 
 
+function _M.is_cp_reachable()
+  return cp_reachable
+end
+
+
 function _M:init_worker(basic_info)
   -- ROLE = "data_plane"
 
@@ -98,13 +104,17 @@ local function send_ping(c, log_suffix)
 
   local _, err = c:send_ping(hash)
   if err then
+    cp_reachable = false
     ngx_log(is_timeout(err) and ngx_NOTICE or ngx_WARN, _log_prefix,
             "unable to send ping frame to control plane: ", err, log_suffix)
 
   -- only log a ping if the hash changed
-  elseif hash ~= prev_hash then
-    prev_hash = hash
-    ngx_log(ngx_INFO, _log_prefix, "sent ping frame to control plane with hash: ", hash, log_suffix)
+  else
+    cp_reachable = true
+    if hash ~= prev_hash then
+      prev_hash = hash
+      ngx_log(ngx_INFO, _log_prefix, "sent ping frame to control plane with hash: ", hash, log_suffix)
+    end
   end
 end
 
@@ -156,6 +166,7 @@ function _M:communicate(premature)
 
   local c, uri, err = clustering_utils.connect_cp(self, "/v1/outlet")
   if not c then
+    cp_reachable = false
     ngx_log(ngx_WARN, _log_prefix, "connection to control plane ", uri, " broken: ", err,
                  " (retrying after ", reconnection_delay, " seconds)", log_suffix)
 
@@ -188,6 +199,7 @@ function _M:communicate(premature)
                                        filters = self.filters,
                                        labels = labels, }))
   if err then
+    cp_reachable = false
     ngx_log(ngx_ERR, _log_prefix, "unable to send basic information to control plane: ", uri,
                      " err: ", err, " (retrying after ", reconnection_delay, " seconds)", log_suffix)
 
@@ -197,6 +209,7 @@ function _M:communicate(premature)
     end))
     return
   end
+  cp_reachable = true
 
   local config_semaphore = semaphore.new(0)
 
@@ -302,16 +315,19 @@ function _M:communicate(premature)
       local data, typ, err = c:recv_frame()
       if err then
         if not is_timeout(err) then
+          cp_reachable = false
           return nil, "error while receiving frame from control plane: " .. err
         end
 
         local waited = ngx_time() - last_seen
         if waited > PING_WAIT then
+          cp_reachable = false
           return nil, "did not receive pong frame from control plane within " .. PING_WAIT .. " seconds"
         end
 
         goto continue
       end
+      cp_reachable = true
 
       if typ == "close" then
         ngx_log(ngx_DEBUG, _log_prefix, "received close frame from control plane", log_suffix)
