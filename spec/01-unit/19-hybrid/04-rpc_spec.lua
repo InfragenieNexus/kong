@@ -5,31 +5,43 @@ local client = require("spec.helpers.rpc_mock.client")
 
 describe("rpc v2", function()
   describe("full sync pagination", function()
-    describe("server side #t", function()
+    describe("server side", function()
       local server_mock
-      local port
       lazy_setup(function()
+        server_mock = server.new()
+        assert(server_mock:start())
 
-        helpers.start_kong({
+        assert(helpers.start_kong({
+          database = "off",
           role = "data_plane",
           cluster_cert = "spec/fixtures/kong_spec.crt",
           cluster_cert_key = "spec/fixtures/kong_spec.key",
           cluster_rpc = "on",
-          -- cluster_rpc_listen = "localhost:" .. port,
           cluster_rpc_sync = "on",
           log_level = "debug",
-        })
-        server_mock = server.new()
-        assert(server_mock:start())
-        port = server_mock.listen
+          cluster_control_plane = "localhost:8005",
+        }))
       end)
       lazy_teardown(function()
         server_mock:stop(true)
-
         helpers.stop_kong(nil, true)
       end)
 
       it("works", function()
+        -- the initial sync is flaky. let's trigger a sync by creating a service
+        local admin_client = helpers.admin_client()
+        assert.res_status(201, admin_client:send {
+          method = "POST",
+          path = "/services/",
+          body = {
+            name = "mockbin",
+            url = "http://mockbin.org",
+          },
+          headers = {
+            ["Content-Type"] = "application/json",
+          },
+        })
+
         helpers.wait_until(function()
           return server_mock.records and next(server_mock.records)
         end,20)

@@ -10,7 +10,7 @@ function _M.new(opts)
   opts.prefix = opts.prefix or "servroot_rpc_tap"
   opts.role = "control_plane"
   opts.plugins = "bundled,rpc-proxy"
-  opts.listen = opts.listen or 8005
+  opts.listen = opts.listen or 8005 -- default clustering port
   opts.cluster_listen = opts.cluster_listen or ("0.0.0.0:" .. opts.listen)
   opts.mocks = opts.mocks or {}
   opts.prehooks = opts.prehooks or {}
